@@ -16,61 +16,47 @@ app.use(express.static('public'))
 //create websocket on the web server
 const io = socket(server)
 
-const feeds = []
-let interfaceFeed = []
+const tick = 2
+const feeds = {}
+const webFeed = {
+    source: null,
+    connection: null,
+    sub: null
+}
 
 io.sockets.on('connection', (sock) => {
     console.log('Connected ::', sock.id)
 
-    sock.on('feed', (data) => {
-        console.log(`Received < ${data} > from :: ${sock.id}`)
+    source = Rx.fromEvent(sock, 'feed')
+    sub = source.subscribe(data => {
+        //console.log(`IN OBSERVABLE ${sock.id} : ${JSON.stringify(data)}`
     })
+    feeds[sock.id] = { source, sub }
+    //update the web feed
+    updateWebFeed()
 
-    sock.on('interface', () => {
-        console.log('Web interface connected !!!')
-        aggr = getFeedForTimeFrame(5)
-        console.log('connecting aggregator ...')
-        aggrConnection = aggr.connect()
-        console.log('aggregator connected !')
-        aggrSub = aggr.subscribe(data => { 
-            console.log(`Aggregated FEED :: ${JSON.stringify(data)}`)
-            sock.emit('aggregator', data)
-        })
-        interfaceFeed = [aggr, aggrConnection, aggrSub, sock.id]
-    })
     //listen for client disconnect
     sock.on('disconnect', (reason) => {
         console.log(`Socket Disconnected :: ${sock.id} :: ${reason}`)
-        let toDelete
-        feeds.forEach((feed, i) => {
-            if (feed[2] == sock.id) {
-                feed[1].unsubscribe()
-                console.log(`Unsubscribed feed ${feed[2]}`)
-                toDelete = i
-            }
-        })
-        delete feeds[toDelete]
-        //also clear web intercace feed if needed
-        if(interfaceFeed[3] && sock.id == interfaceFeed[3]) {
-            interfaceFeed[1].unsubscribe()
-            interfaceFeed[2].unsubscribe()
-            interfaceFeed = []
-            console.log('Aggregated FEED disconnected and unsubscribed !!!')
-        }
+        //unsubscribe
+        feeds[sock.id].sub.unsubscribe()
+        console.log(`Unsubscribed feed !`)
+        //remove socket
+        delete feeds[sock.id]
+        //update web feed with remaining feeds
+        updateWebFeed()
     })
-    source = Rx.fromEvent(sock, 'feed')
-    sub = source.subscribe(data => console.log(`IN OBSERVABLE ${sock.id} : ${JSON.stringify(data)}`))
-    feeds.push([source, sub, sock.id])
 })
 
-
 const getFeedForTimeFrame = (timeFrame) => {
-    //timer ticking every 'timeFrame' seconds
-    const timer = Rx.interval(timeFrame * 1000)
+    //timer ticking every 'timeFrame' seconds,
+    //starting after 1 sec delay to buffer some initial data
+
+    const timer = Rx.timer(1000, timeFrame * 1000)
     //create the aggregated feed
-    const feed = Rx.merge(
+    return Rx.merge(
         //augment all feeds output to include their extended PriceFeed props
-        ...feeds.map(pf => pf[0]))
+        ...Object.values(feeds).map(pf => pf.source))
         .pipe(
             //buffer output between timer ticks
             rxOps.buffer(timer),
@@ -80,20 +66,10 @@ const getFeedForTimeFrame = (timeFrame) => {
             //publish as ConnectableObservable
             rxOps.publish()
         )
-    console.log('FEED :: ', feed)
-    return feed
 }
-
-/* addPriceFeed(priceFeed) {
-    this.priceFeeds.push(priceFeed)
-}
-
-removePriceFeed(providerName) {
-
-} */
 
 const aggregator = (input) => {
-    console.log('input :: ', input);
+    //reduce the input to the latest entry for each 'providerName-symblol' combination
     const reduced = input.reduce((result, pf) => {
         if (!result[`${pf.providerName}-${pf.symbol}`]) {
             result[`${pf.providerName}-${pf.symbol}`] = pf
@@ -104,8 +80,7 @@ const aggregator = (input) => {
         }
         return result
     }, {})
-    console.log('reduced :: ', reduced)
-    console.log('count :: ', Object.values(reduced).length)
+    //create and return the aggregated summary object
     return Object.values(
         Object.values(reduced).reduce((summary, pf) => {
             //does symbol exists as key ?
@@ -132,6 +107,7 @@ const aggregator = (input) => {
     )
 }
 
+//helper to init the summary object
 const initPriceSummary = (pf) => {
     return {
         symbol: pf.symbol,
@@ -147,4 +123,28 @@ const initPriceSummary = (pf) => {
             provider: pf.providerName
         }
     }
+}
+
+const observer = {
+    next: (data) => {
+        io.sockets.emit('aggregator', data)
+    },
+    error: (err) => {
+        console.error('ERROR :: ', err)
+    },
+    complete: () => console.log('Aggregated Feed Completed !')
+}
+
+const updateWebFeed = () => {
+    //disconnect and unsubscribe existing web feed
+    if (webFeed.source) {
+        webFeed.connection.unsubscribe()
+        webFeed.sub.unsubscribe()
+    }
+    //get new feed, connect and subscribe
+    webFeed.source = getFeedForTimeFrame(tick)
+    webFeed.connection = webFeed.source.connect()
+    webFeed.sub = webFeed.source.subscribe(observer)
+    console.log('Inputs updated !')
+    io.sockets.emit('update', null)
 }
