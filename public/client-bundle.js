@@ -17,6 +17,7 @@ const updateEvent = {
 
 socket.on('connect', () => {
     console.log('Connected to server !')
+    //create event observables
     aggregatorFeed.source = Rx.fromEvent(socket, 'aggregator')
     aggregatorFeed.sub = aggregatorFeed.source.subscribe(aggregatorObserver)
     updateEvent.source = Rx.fromEvent(socket, 'update')
@@ -29,7 +30,7 @@ socket.on('disconnect', () => {
     if (aggregatorFeed.source) {
         aggregatorFeed.sub.unsubscribe()
         console.log('Unsubscribed feed.')
-        aggregator.source = null
+        aggregatorFeed.source = null
     }
     //unsub and clear the update event
     if (updateEvent.source) {
