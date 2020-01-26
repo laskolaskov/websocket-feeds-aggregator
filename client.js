@@ -29,7 +29,7 @@ socket.on('disconnect', () => {
     if (aggregatorFeed.source) {
         aggregatorFeed.sub.unsubscribe()
         console.log('Unsubscribed feed.')
-        aggregator.source = null
+        aggregatorFeed.source = null
     }
     //unsub and clear the update event
     if (updateEvent.source) {
