@@ -33,7 +33,7 @@ io.sockets.on('connection', (sock) => {
     })
     feeds[sock.id] = { source, sub }
     //update the web feed
-    updateWebFeed()
+    updateWebFeed(sock.id, true)
 
     //listen for client disconnect
     sock.on('disconnect', (reason) => {
@@ -44,7 +44,7 @@ io.sockets.on('connection', (sock) => {
         //remove socket
         delete feeds[sock.id]
         //update web feed with remaining feeds
-        updateWebFeed()
+        updateWebFeed(sock.id, false)
     })
 })
 
@@ -135,7 +135,7 @@ const observer = {
     complete: () => console.log('Aggregated Feed Completed !')
 }
 
-const updateWebFeed = () => {
+const updateWebFeed = (id, isAdded) => {
     //disconnect and unsubscribe existing web feed
     if (webFeed.source) {
         webFeed.connection.unsubscribe()
@@ -146,5 +146,5 @@ const updateWebFeed = () => {
     webFeed.connection = webFeed.source.connect()
     webFeed.sub = webFeed.source.subscribe(observer)
     console.log('Inputs updated !')
-    io.sockets.emit('update', null)
+    io.sockets.emit('update', `Source updated ! ${isAdded ? 'Added' : 'Removed'} : ${id}`)
 }
